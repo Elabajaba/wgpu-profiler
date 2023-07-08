@@ -19,19 +19,19 @@ fn scopes_to_console_recursive(results: &[GpuTimerScopeResult], indentation: u32
 }
 
 fn console_output(results: &Option<Vec<GpuTimerScopeResult>>, enabled_features: wgpu::Features) {
-    print!("\x1B[2J\x1B[1;1H"); // Clear terminal and put cursor to first row first column
-    println!("Welcome to wgpu_profiler demo!");
-    println!();
-    println!("Enabled device features: {:?}", enabled_features);
-    println!();
-    println!("Press space to write out a trace file that can be viewed in chrome's chrome://tracing");
-    println!();
-    match results {
-        Some(results) => {
-            scopes_to_console_recursive(&results, 0);
-        }
-        None => println!("No profiling results available yet!"),
-    }
+    // print!("\x1B[2J\x1B[1;1H"); // Clear terminal and put cursor to first row first column
+    // println!("Welcome to wgpu_profiler demo!");
+    // println!();
+    // println!("Enabled device features: {:?}", enabled_features);
+    // println!();
+    // println!("Press space to write out a trace file that can be viewed in chrome's chrome://tracing");
+    // println!();
+    // match results {
+    //     Some(results) => {
+    //         scopes_to_console_recursive(&results, 0);
+    //     }
+    //     None => println!("No profiling results available yet!"),
+    // }
 }
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
@@ -40,6 +40,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         backends: wgpu::Backends::all(),
         dx12_shader_compiler: wgpu::Dx12Compiler::default(),
     });
+
     let surface = unsafe { instance.create_surface(&window) }.expect("Failed to create surface.");
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -103,7 +104,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         height: size.height,
         // By using the Fifo mode we ensure that CPU waits for GPU, thus we won't have an arbitrary amount of frames in flight that may be discarded.
         // Profiler works just fine in any other mode, but keep in mind that this can mean that it would need to buffer up many more frames until the first results are back.
-        present_mode: wgpu::PresentMode::Fifo,
+        present_mode: wgpu::PresentMode::AutoNoVsync,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![swapchain_format],
     };
@@ -111,7 +112,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     surface.configure(&device, &sc_desc);
 
     // Create a new profiler instance
-    let mut profiler = GpuProfiler::new(4, queue.get_timestamp_period(), device.features());
+    let mut profiler = GpuProfiler::new(4, queue.get_timestamp_period(), device.features(), &device);
     let mut latest_profiler_results = None;
 
     event_loop.run(move |event, _, control_flow| {

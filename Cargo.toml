@@ -13,9 +13,12 @@ resolver = "2"
 [lib]
 
 [dependencies]
-wgpu = "0.16"
+ulid = "1.0.0"
+# wgpu = "0.16"
+# wgpu = { path = "../wgpu/wgpu" }
+wgpu = { git = "https://github.com/gents83/wgpu.git", rev = "9243a926dd79b96bdc82d95ac49d5feafa4f0676" }
 
 [dev-dependencies]
-winit = "0.27.5"
+winit = "0.28.6"
 futures-lite = "1"
 #env_logger = "0.8.2"

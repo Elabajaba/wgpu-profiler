@@ -77,6 +77,8 @@ On [`GpuProfiler::end_frame`], we memorize the total size of all `QueryPool`s in
 
 use std::{convert::TryInto, ops::Range, thread::ThreadId};
 
+use ulid::Ulid;
+
 pub mod chrometrace;
 pub mod macros;
 pub mod scope;
@@ -133,17 +135,19 @@ impl GpuProfiler {
     /// (Typical values for `max_num_pending_frames` are 2~4)
     ///
     /// `timestamp_period` needs to be set to the result of [`wgpu::Queue::get_timestamp_period`]
-    pub fn new(max_num_pending_frames: usize, timestamp_period: f32, active_features: wgpu::Features) -> Self {
+    pub fn new(max_num_pending_frames: usize, timestamp_period: f32, active_features: wgpu::Features, _device: &wgpu::Device) -> Self {
         assert!(max_num_pending_frames > 0);
         GpuProfiler {
             enable_pass_timer: active_features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
             enable_encoder_timer: active_features.contains(wgpu::Features::TIMESTAMP_QUERY),
             enable_debug_marker: true,
 
+            // unused_pools: vec![QueryPool::new(QueryPool::MIN_CAPACITY, device)],
             unused_pools: Vec::new(),
 
             pending_frames: Vec::with_capacity(max_num_pending_frames),
             active_frame: PendingFrame {
+                // query_pools: vec![QueryPool::new(QueryPool::MIN_CAPACITY, device)],
                 query_pools: Vec::new(),
                 mapped_buffers: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
                 closed_scopes: Vec::new(),
@@ -166,6 +170,11 @@ impl GpuProfiler {
     /// See also [`wgpu_profiler!`], [`GpuProfiler::end_scope`]
     pub fn begin_scope<Recorder: ProfilerCommandRecorder>(&mut self, label: &str, encoder_or_pass: &mut Recorder, device: &wgpu::Device) {
         if (encoder_or_pass.is_pass() && self.enable_pass_timer) || (!encoder_or_pass.is_pass() && self.enable_encoder_timer) {
+            if encoder_or_pass.is_pass() {
+                println!("begin_scope_pass");
+            } else {
+                println!("begin_scope_encoder");
+            }
             let start_query = self.allocate_query_pair(device);
 
             encoder_or_pass.write_timestamp(
@@ -196,6 +205,11 @@ impl GpuProfiler {
     /// See also [`wgpu_profiler!`], [`GpuProfiler::begin_scope`]
     pub fn end_scope<Recorder: ProfilerCommandRecorder>(&mut self, encoder_or_pass: &mut Recorder) {
         if (encoder_or_pass.is_pass() && self.enable_pass_timer) || (!encoder_or_pass.is_pass() && self.enable_encoder_timer) {
+            if encoder_or_pass.is_pass() {
+                println!("end_scope_pass");
+            } else {
+                println!("end_scope_encoder");
+            }
             let open_scope = self.open_scopes.pop().expect("No profiler GpuProfiler scope was previously opened");
             encoder_or_pass.write_timestamp(
                 &self.active_frame.query_pools[open_scope.start_query.pool_idx as usize].query_set,
@@ -214,7 +228,12 @@ impl GpuProfiler {
 
     /// Puts query resolve commands in the encoder for all unresolved, pending queries of the current profiler frame.
     pub fn resolve_queries(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        println!("resolve_queries");
+        let mut counter = 0;
         for query_pool in self.active_frame.query_pools.iter_mut() {
+            println!("query_pool counter: {}", counter);
+            println!("query_pool: {}", query_pool.ulid);
+            counter += 1;
             if query_pool.num_resolved_queries == query_pool.num_used_queries {
                 continue;
             }
@@ -228,6 +247,11 @@ impl GpuProfiler {
                 (query_pool.num_resolved_queries * QUERY_SIZE) as u64,
             );
             query_pool.num_resolved_queries = query_pool.num_used_queries;
+
+            
+
+            // println!("resolve_buffer: {:?}", query_pool.resolve_buffer.size());
+            // println!("read_buffer: {:?}", query_pool.read_buffer.size());
 
             encoder.copy_buffer_to_buffer(
                 &query_pool.resolve_buffer,
@@ -243,6 +267,7 @@ impl GpuProfiler {
     /// Needs to be called **after** submitting any encoder used in the current frame.
     #[allow(clippy::result_unit_err)]
     pub fn end_frame(&mut self) -> Result<(), ()> {
+        println!("end_frame");
         // TODO: Error messages
         if !self.open_scopes.is_empty() {
             return Err(());
@@ -267,6 +292,11 @@ impl GpuProfiler {
             // Dropping the oldest frame could get us into an endless cycle where we're never able to complete
             // any pending frames as the ones closest to completion would be evicted.
             let dropped_frame = self.pending_frames.pop().unwrap();
+            let mut counter = 0;
+            for query_pool in &dropped_frame.query_pools {
+                println!("dropped_frame pool {}: {}", counter, query_pool.ulid);
+                counter += 1;
+            }
 
             // Mark the frame as dropped. We'll give back the query pools once the mapping is done.
             // Any previously issued map_async call that haven't finished yet, will invoke their callback with mapping abort.
@@ -338,8 +368,10 @@ impl GpuProfiler {
         // This way we're going to need less pools in upcoming frames and thus have less overhead in the long run.
         let capacity_threshold = self.size_for_new_query_pools / 2;
         for mut pool in query_pools.drain(..) {
+            println!("resetting pool: {}", pool.ulid);
             pool.reset();
             if pool.capacity >= capacity_threshold {
+                println!("setting pool to unused: {}", pool.ulid);
                 self.unused_pools.push(pool);
             }
         }
@@ -358,13 +390,18 @@ impl GpuProfiler {
                 };
                 active_pool.num_used_queries += 2;
                 assert!(active_pool.num_used_queries <= active_pool.capacity);
+                println!("Using active query pool: {}", active_pool.ulid);
                 return address;
             }
         }
 
         let mut new_pool = if let Some(reused_pool) = self.unused_pools.pop() {
+            // reused_pool.read_buffer.unmap();
+            // reused_pool.resolve_buffer.unmap();
+            println!("Reusing unused query pool: {}", reused_pool.ulid);
             reused_pool
         } else {
+            println!("Creating new query pool with capacity {}", self.size_for_new_query_pools);
             QueryPool::new(
                 self.active_frame
                     .query_pools
@@ -445,6 +482,8 @@ struct QueryPool {
     capacity: u32,
     num_used_queries: u32,
     num_resolved_queries: u32,
+    ulid: Ulid,
+    reset_counter: usize,
 }
 
 impl QueryPool {
@@ -475,6 +514,8 @@ impl QueryPool {
             capacity,
             num_used_queries: 0,
             num_resolved_queries: 0,
+            ulid: Ulid::new(),
+            reset_counter: 0,
         }
     }
 
@@ -482,6 +523,7 @@ impl QueryPool {
         self.num_used_queries = 0;
         self.num_resolved_queries = 0;
         self.read_buffer.unmap();
+        self.reset_counter += 1;
     }
 
     fn read_buffer_slice(&self) -> wgpu::BufferSlice {
