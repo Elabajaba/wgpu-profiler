@@ -170,11 +170,11 @@ impl GpuProfiler {
     /// See also [`wgpu_profiler!`], [`GpuProfiler::end_scope`]
     pub fn begin_scope<Recorder: ProfilerCommandRecorder>(&mut self, label: &str, encoder_or_pass: &mut Recorder, device: &wgpu::Device) {
         if (encoder_or_pass.is_pass() && self.enable_pass_timer) || (!encoder_or_pass.is_pass() && self.enable_encoder_timer) {
-            if encoder_or_pass.is_pass() {
-                println!("begin_scope_pass");
-            } else {
-                println!("begin_scope_encoder");
-            }
+            // if encoder_or_pass.is_pass() {
+            //     println!("begin_scope_pass");
+            // } else {
+            //     println!("begin_scope_encoder");
+            // }
             let start_query = self.allocate_query_pair(device);
 
             encoder_or_pass.write_timestamp(
@@ -205,11 +205,11 @@ impl GpuProfiler {
     /// See also [`wgpu_profiler!`], [`GpuProfiler::begin_scope`]
     pub fn end_scope<Recorder: ProfilerCommandRecorder>(&mut self, encoder_or_pass: &mut Recorder) {
         if (encoder_or_pass.is_pass() && self.enable_pass_timer) || (!encoder_or_pass.is_pass() && self.enable_encoder_timer) {
-            if encoder_or_pass.is_pass() {
-                println!("end_scope_pass");
-            } else {
-                println!("end_scope_encoder");
-            }
+            // if encoder_or_pass.is_pass() {
+            //     println!("end_scope_pass");
+            // } else {
+            //     println!("end_scope_encoder");
+            // }
             let open_scope = self.open_scopes.pop().expect("No profiler GpuProfiler scope was previously opened");
             encoder_or_pass.write_timestamp(
                 &self.active_frame.query_pools[open_scope.start_query.pool_idx as usize].query_set,
@@ -233,6 +233,8 @@ impl GpuProfiler {
         for query_pool in self.active_frame.query_pools.iter_mut() {
             println!("query_pool counter: {}", counter);
             println!("query_pool: {}", query_pool.ulid);
+            println!("query_pool.num_resolved_queries: {}", query_pool.num_resolved_queries);
+            println!("query_pool.reset_counter: {}", query_pool.reset_counter);
             counter += 1;
             if query_pool.num_resolved_queries == query_pool.num_used_queries {
                 continue;
@@ -373,6 +375,8 @@ impl GpuProfiler {
             if pool.capacity >= capacity_threshold {
                 println!("setting pool to unused: {}", pool.ulid);
                 self.unused_pools.push(pool);
+            } else {
+                println!("dropping pool: {}", pool.ulid);
             }
         }
     }
@@ -390,7 +394,6 @@ impl GpuProfiler {
                 };
                 active_pool.num_used_queries += 2;
                 assert!(active_pool.num_used_queries <= active_pool.capacity);
-                println!("Using active query pool: {}", active_pool.ulid);
                 return address;
             }
         }
@@ -399,6 +402,7 @@ impl GpuProfiler {
             // reused_pool.read_buffer.unmap();
             // reused_pool.resolve_buffer.unmap();
             println!("Reusing unused query pool: {}", reused_pool.ulid);
+            println!("Unused_pools length: {}", self.unused_pools.len());
             reused_pool
         } else {
             println!("Creating new query pool with capacity {}", self.size_for_new_query_pools);
